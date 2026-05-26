@@ -32,9 +32,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /** Mirrors go/hibot/v1/sessions.go and stream.go. */
 public final class SessionsService {
@@ -42,6 +44,25 @@ public final class SessionsService {
     private final HibotConfig config;
     private final ConcurrentHashMap<String, String> sessionAgents = new ConcurrentHashMap<>();
     private static final ObjectMapper MAPPER = ResponseDecoder.mapper();
+    private static final SecureRandom RNG = new SecureRandom();
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+
+    /**
+     * 生成符合 {@code ^[A-Za-z0-9_-]{1,64}$} 的 ConversationID。当前实现为 16
+     * 字节随机数转 32 位 hex，长度与字符集均严格满足，且各端 SDK 共用同一种
+     * 生成策略。仅在 webchat 渠道下注入。
+     */
+    Supplier<String> conversationIdGenerator = () -> {
+        byte[] buf = new byte[16];
+        RNG.nextBytes(buf);
+        char[] out = new char[buf.length * 2];
+        for (int i = 0; i < buf.length; i++) {
+            int b = buf[i] & 0xff;
+            out[i * 2] = HEX[b >>> 4];
+            out[i * 2 + 1] = HEX[b & 0x0f];
+        }
+        return new String(out);
+    };
 
     public SessionsService(RequestExecutor requester, HibotConfig config) {
         this.requester = requester;
@@ -67,6 +88,14 @@ public final class SessionsService {
             }
             if (!isEmpty(params.peer.peerId)) {
                 payload.put("PeerID", params.peer.peerId);
+            }
+        }
+        // ConversationID 仅在 webchat 渠道由 SDK 自动生成并透传；其它渠道留空，
+        // 这里直接跳过以避免污染请求体。
+        if ("webchat".equals(payload.get("Channel"))) {
+            String cid = conversationIdGenerator.get();
+            if (cid != null && !cid.isEmpty()) {
+                payload.put("ConversationID", cid);
             }
         }
         body.put("Payload", payload);

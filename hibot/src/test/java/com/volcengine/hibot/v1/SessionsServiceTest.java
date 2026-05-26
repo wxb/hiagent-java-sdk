@@ -20,12 +20,17 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionsServiceTest {
+    private static final Pattern CONVERSATION_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
+
     private MockHibotServer server;
     private Hibot client;
 
@@ -65,6 +70,11 @@ class SessionsServiceTest {
         assertEquals("webchat", payload.get("Channel").asText());
         assertEquals("system", payload.get("PeerKind").asText());
         assertEquals("agent-x", payload.get("PeerID").asText());
+        // webchat 渠道 SDK 应自动注入合法的 ConversationID。
+        JsonNode cid = payload.get("ConversationID");
+        assertNotNull(cid, "webchat 渠道应注入 ConversationID");
+        assertTrue(CONVERSATION_ID_PATTERN.matcher(cid.asText()).matches(),
+                "ConversationID 必须匹配 ^[A-Za-z0-9_-]{1,64}$，实际: " + cid.asText());
     }
 
     @Test
@@ -86,6 +96,31 @@ class SessionsServiceTest {
         assertEquals("feishu", payload.get("Channel").asText());
         assertEquals("user", payload.get("PeerKind").asText());
         assertEquals("ou_xxx", payload.get("PeerID").asText());
+        // 非 webchat 渠道 SDK 不应注入 ConversationID。
+        assertFalse(payload.has("ConversationID"),
+                "非 webchat 渠道不应注入 ConversationID");
+    }
+
+    @Test
+    void create_conversationIdsAreUnique() throws Exception {
+        server.onRequest((rec, ex) -> {
+            try {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("ID", "ses-uniq");
+                MockHibotServer.writeOk(ex, result);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        V1SessionNewParams p = new V1SessionNewParams();
+        p.agentId = "agent-x";
+        client.v1.sessions.create(p);
+        String first = server.last().bodyJson().get("Payload").get("ConversationID").asText();
+        client.v1.sessions.create(p);
+        String second = server.last().bodyJson().get("Payload").get("ConversationID").asText();
+        assertNotEquals(first, second, "两次创建的 ConversationID 不应重复");
+        assertTrue(CONVERSATION_ID_PATTERN.matcher(first).matches());
+        assertTrue(CONVERSATION_ID_PATTERN.matcher(second).matches());
     }
 
     @Test
