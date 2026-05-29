@@ -12,6 +12,6 @@ public final class V1MCPTestConnectionParams {
     public String command;
     public List<String> args;
     public String authType;
-    public V1CredentialRefParams credential;
+    public V1MCPCredentialInputParams credentialConfig;
     public Long timeout;
 }

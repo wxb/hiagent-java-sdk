@@ -8,8 +8,9 @@ import com.volcengine.hibot.v1.V1Constants;
 import com.volcengine.hibot.v1.types.V1Agent;
 import com.volcengine.hibot.v1.types.V1AgentNewParams;
 import com.volcengine.hibot.v1.types.V1AgentNewParamsToolUnion;
-import com.volcengine.hibot.v1.types.V1CredentialRefParams;
+import com.volcengine.hibot.v1.types.V1CredentialSecretInputParams;
 import com.volcengine.hibot.v1.types.V1MCP;
+import com.volcengine.hibot.v1.types.V1MCPCredentialInputParams;
 import com.volcengine.hibot.v1.types.V1MCPNewParams;
 import com.volcengine.hibot.v1.types.V1ManagedAgentMCPToolParams;
 import com.volcengine.hibot.v1.types.V1ManagedAgentModelConfigParams;
@@ -128,7 +129,12 @@ class FullJourneyOfflineTest {
         mcpParams.name = "e2e-mcp";
         mcpParams.transport = V1Constants.V1_MCP_TRANSPORT_STREAMABLE_HTTP;
         mcpParams.endpoint = "http://mcp.local/mcp";
-        mcpParams.credential = new V1CredentialRefParams("e2e-token");
+        V1MCPCredentialInputParams cred = new V1MCPCredentialInputParams();
+        cred.name = "e2e-mcp-cred";
+        cred.providerType = "static";
+        cred.secrets = java.util.Collections.singletonList(
+                new V1CredentialSecretInputParams("token", "e2e-token-value"));
+        mcpParams.credentialConfig = cred;
         V1MCP mcp = client.v1.mcps.create(mcpParams);
         assertNotNull(mcp.id);
 

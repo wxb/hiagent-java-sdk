@@ -55,8 +55,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 class RealEnvE2eTest {
 
     private static final String SKILL_PULSE_TOKEN = "PULSE_OK_E2E";
-    private static final String RESOURCE_FIXTURE = "testdata/runbook.md";
-    private static final String SKILL_FIXTURE_DIR = "testdata/skill";
+    private static final String RESOURCE_FIXTURE = "../go/testdata/runbook.md";
+    private static final String SKILL_FIXTURE_DIR = "../go/testdata/skill";
 
     /**
      * 用例 A：对齐 runRealEnvJourney，使用工作空间内已有 Agent 跑最小闭环

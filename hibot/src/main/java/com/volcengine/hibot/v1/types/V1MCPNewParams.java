@@ -15,7 +15,7 @@ public final class V1MCPNewParams {
     public String command;
     public List<String> args;
     public String authType;
-    public V1CredentialRefParams credential;
+    public V1MCPCredentialInputParams credentialConfig;
     public List<String> toolAllowlist;
     public List<String> toolDenylist;
     public String toolPrefix;

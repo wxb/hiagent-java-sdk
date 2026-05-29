@@ -48,9 +48,8 @@ public final class SessionsService {
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
     /**
-     * 生成符合 {@code ^[A-Za-z0-9_-]{1,64}$} 的 ConversationID。当前实现为 16
-     * 字节随机数转 32 位 hex，长度与字符集均严格满足，且各端 SDK 共用同一种
-     * 生成策略。仅在 webchat 渠道下注入。
+     * 生成 ConversationID：
+     * {@code ^[A-Za-z0-9_-]{1,64}$}。当前实现为 16 字节随机数转 32 位 hex，
      */
     Supplier<String> conversationIdGenerator = () -> {
         byte[] buf = new byte[16];
@@ -90,8 +89,7 @@ public final class SessionsService {
                 payload.put("PeerID", params.peer.peerId);
             }
         }
-        // ConversationID 仅在 webchat 渠道由 SDK 自动生成并透传；其它渠道留空，
-        // 这里直接跳过以避免污染请求体。
+        // ConversationID 仅在 webchat（SupportsMultiSession=true）渠道下由SDK 自动生成并透传
         if ("webchat".equals(payload.get("Channel"))) {
             String cid = conversationIdGenerator.get();
             if (cid != null && !cid.isEmpty()) {
@@ -241,7 +239,7 @@ public final class SessionsService {
 
     /** Send a chat message and block until the final response arrives. */
     public V1Message chat(String sessionId, V1SessionChatParams params) {
-        try (V1ChatStream stream = chatStreaming(sessionId, params)) {
+        try (V1ChatStream stream = chatStream(sessionId, params, true)) {
             while (stream.next()) {
                 V1SessionChatEvent ev = stream.current();
                 if (V1Constants.V1_SESSION_CHAT_EVENT_FAILED.equals(ev.type)) {
@@ -259,6 +257,15 @@ public final class SessionsService {
 
     /** Send a chat message in streaming mode. */
     public V1ChatStream chatStreaming(String sessionId, V1SessionChatParams params) {
+        return chatStream(sessionId, params, false);
+    }
+
+    /**
+     * Chat 与 chatStreaming 的共享底座。autoApproveAll=true 时自动注入 Approve="all"：
+     * webchat 非流式聚合调用方在收到批回复前不需要再走显式审批；流式订阅方仍可通过
+     * SSE approval_request 事件参与人审。
+     */
+    private V1ChatStream chatStream(String sessionId, V1SessionChatParams params, boolean autoApproveAll) {
         if (params == null) params = new V1SessionChatParams();
         String agentId = params.agentId;
         if (isEmpty(agentId)) {
@@ -268,8 +275,17 @@ public final class SessionsService {
         Bodies.putIfNotEmpty(body, "WorkspaceID", params.workspaceId);
         body.put("SessionID", sessionId);
         Bodies.putIfNotEmpty(body, "AgentID", agentId);
-        Bodies.putIfNotEmpty(body, "Content", params.input);
+        // Content 允许为空：当 files 非空时仅传文件即可。
+        if (params.input != null) {
+            body.put("Content", params.input);
+        }
+        if (params.files != null && !params.files.isEmpty()) {
+            body.put("Files", params.files);
+        }
         Bodies.putIfNotEmpty(body, "ClientMessageID", params.clientMessageId);
+        if (autoApproveAll) {
+            body.put("Approve", "all");
+        }
 
         V1ChatStream stream = new V1ChatStream();
         try {

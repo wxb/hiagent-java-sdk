@@ -10,4 +10,5 @@ public final class V1SkillNewParams {
     public Boolean enabled;
     public String version;
     public String slugId;
+    public V1SkillCredentialInputParams credentialConfig;
 }
