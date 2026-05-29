@@ -6,6 +6,7 @@ import com.volcengine.hibot.internal.Bodies;
 import com.volcengine.hibot.internal.RequestExecutor;
 import com.volcengine.hibot.internal.Versions;
 import com.volcengine.hibot.v1.types.V1MCP;
+import com.volcengine.hibot.v1.types.V1MCPCredentialInputParams;
 import com.volcengine.hibot.v1.types.V1MCPDeleteParams;
 import com.volcengine.hibot.v1.types.V1MCPGetParams;
 import com.volcengine.hibot.v1.types.V1MCPListParams;
@@ -16,6 +17,7 @@ import com.volcengine.hibot.v1.types.V1MCPTestConnectionResult;
 import com.volcengine.hibot.v1.types.V1MCPUpdateParams;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,7 +44,9 @@ public final class McpsService {
         Bodies.putIfNotEmpty(body, "Command", params.command);
         if (params.args != null) body.put("Args", params.args);
         Bodies.putIfNotEmpty(body, "AuthType", params.authType);
-        if (params.credential != null) body.put("Credential", params.credential);
+        if (params.credentialConfig != null) {
+            body.put("CredentialConfig", credentialConfigToMap(params.credentialConfig));
+        }
         if (params.toolAllowlist != null) body.put("ToolAllowlist", params.toolAllowlist);
         if (params.toolDenylist != null) body.put("ToolDenylist", params.toolDenylist);
         Bodies.putIfNotEmpty(body, "ToolPrefix", params.toolPrefix);
@@ -111,6 +115,9 @@ public final class McpsService {
         if (params.command != null) body.put("Command", params.command);
         if (params.args != null) body.put("Args", params.args);
         if (params.authType != null) body.put("AuthType", params.authType);
+        if (params.credentialConfig != null) {
+            body.put("CredentialConfig", credentialConfigToMap(params.credentialConfig));
+        }
         if (params.toolAllowlist != null) body.put("ToolAllowlist", params.toolAllowlist);
         if (params.toolDenylist != null) body.put("ToolDenylist", params.toolDenylist);
         if (params.toolPrefix != null) body.put("ToolPrefix", params.toolPrefix);
@@ -145,7 +152,9 @@ public final class McpsService {
             Bodies.putIfNotEmpty(body, "Command", params.command);
             if (params.args != null) body.put("Args", params.args);
             Bodies.putIfNotEmpty(body, "AuthType", params.authType);
-            if (params.credential != null) body.put("Credential", params.credential);
+            if (params.credentialConfig != null) {
+                body.put("CredentialConfig", credentialConfigToMap(params.credentialConfig));
+            }
             if (params.timeout != null) body.put("Timeout", params.timeout);
         }
         return requester.doAction(
@@ -180,6 +189,30 @@ public final class McpsService {
     }
 
     private static boolean isEmpty(String s) { return s == null || s.isEmpty(); }
+
+    /** 把 V1MCPCredentialInputParams 序列化为 server expects 的 CredentialConfig map。 */
+    static Map<String, Object> credentialConfigToMap(V1MCPCredentialInputParams cfg) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (cfg.name != null && !cfg.name.isEmpty()) body.put("Name", cfg.name);
+        if (cfg.description != null && !cfg.description.isEmpty()) body.put("Description", cfg.description);
+        if (cfg.source != null && !cfg.source.isEmpty()) body.put("Source", cfg.source);
+        if (cfg.providerType != null && !cfg.providerType.isEmpty()) body.put("ProviderType", cfg.providerType);
+        if (cfg.config != null) body.put("Config", cfg.config);
+        if (cfg.secrets != null && !cfg.secrets.isEmpty()) {
+            List<Map<String, Object>> secrets = new ArrayList<>();
+            for (com.volcengine.hibot.v1.types.V1CredentialSecretInputParams s : cfg.secrets) {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                if (s.secretId != null && !s.secretId.isEmpty()) entry.put("SecretID", s.secretId);
+                if (s.keyName != null && !s.keyName.isEmpty()) entry.put("KeyName", s.keyName);
+                if (s.description != null && !s.description.isEmpty()) entry.put("Description", s.description);
+                if (s.secretType != null && !s.secretType.isEmpty()) entry.put("SecretType", s.secretType);
+                if (s.secretValue != null && !s.secretValue.isEmpty()) entry.put("SecretValue", s.secretValue);
+                secrets.add(entry);
+            }
+            body.put("Secrets", secrets);
+        }
+        return body;
+    }
 
     private static final class IdResult {
         @com.fasterxml.jackson.annotation.JsonProperty("ID") public String id;

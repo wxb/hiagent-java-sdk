@@ -11,4 +11,5 @@ public final class V1SkillUpdateParams {
     public Boolean enabled;
     public String newVersion;
     public String slugId;
+    public V1SkillCredentialInputParams credentialConfig;
 }
