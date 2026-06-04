@@ -32,7 +32,14 @@ public final class SkillsService {
         this.config = config;
     }
 
-    public V1SkillVersion create(V1SkillNewParams params) {
+    /**
+     * Creates a skill and returns a {@link V1Skill} handle for the created record.
+     *
+     * <p>The upstream {@code CreateSkill} API currently returns only the created {@code ID}.
+     * The SDK therefore populates the returned object with that {@code ID} and echoes the
+     * caller-supplied fields from {@code params} when available.
+     */
+    public V1Skill create(V1SkillNewParams params) {
         if (params == null) params = new V1SkillNewParams();
         if (isEmpty(params.source)) params.source = "manual";
         Map<String, Object> body = Bodies.map();
@@ -54,12 +61,16 @@ public final class SkillsService {
         if (r == null || isEmpty(r.id)) {
             throw new IllegalStateException("hibot: create skill response missing ID");
         }
-        V1SkillVersion v = new V1SkillVersion();
-        v.id = r.id;
-        v.skillId = params.skillId;
-        v.name = params.name;
-        v.version = params.version;
-        return v;
+        V1Skill skill = new V1Skill();
+        skill.id = r.id;
+        skill.skillId = params.skillId;
+        skill.name = params.name;
+        skill.description = params.description;
+        skill.source = params.source;
+        skill.version = params.version;
+        skill.enabled = params.enabled;
+        skill.slugId = params.slugId;
+        return skill;
     }
 
     public List<V1Skill> list(V1SkillListParams params) {
