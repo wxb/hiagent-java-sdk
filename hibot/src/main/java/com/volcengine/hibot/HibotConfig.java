@@ -1,7 +1,8 @@
 package com.volcengine.hibot;
 
-import java.net.http.HttpClient;
-import java.time.Duration;
+import okhttp3.OkHttpClient;
+
+import java.util.concurrent.TimeUnit;
 
 /** Hibot SDK client configuration. */
 public final class HibotConfig {
@@ -10,7 +11,7 @@ public final class HibotConfig {
     private final String secretKey;
     private final String workspaceId;
     private final String region;
-    private final HttpClient httpClient;
+    private final OkHttpClient httpClient;
     private final String serverService;
     private final String gatewayService;
     private final String modelService;
@@ -28,7 +29,7 @@ public final class HibotConfig {
         this.upService = orDefault(trim(b.upService), "up");
         this.httpClient = b.httpClient != null
                 ? b.httpClient
-                : HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+                : new OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).build();
 
         if (this.endpoint.isEmpty()) {
             throw new IllegalArgumentException("hibot: endpoint is required");
@@ -53,7 +54,7 @@ public final class HibotConfig {
     public String secretKey() { return secretKey; }
     public String workspaceId() { return workspaceId; }
     public String region() { return region; }
-    public HttpClient httpClient() { return httpClient; }
+    public OkHttpClient httpClient() { return httpClient; }
     public String serverService() { return serverService; }
     public String gatewayService() { return gatewayService; }
     public String modelService() { return modelService; }
@@ -73,7 +74,7 @@ public final class HibotConfig {
         private String secretKey;
         private String workspaceId;
         private String region;
-        private HttpClient httpClient;
+        private OkHttpClient httpClient;
         private String serverService;
         private String gatewayService;
         private String modelService;
@@ -84,7 +85,7 @@ public final class HibotConfig {
         public Builder secretKey(String v) { this.secretKey = v; return this; }
         public Builder workspaceId(String v) { this.workspaceId = v; return this; }
         public Builder region(String v) { this.region = v; return this; }
-        public Builder httpClient(HttpClient v) { this.httpClient = v; return this; }
+        public Builder httpClient(OkHttpClient v) { this.httpClient = v; return this; }
         public Builder serverService(String v) { this.serverService = v; return this; }
         public Builder gatewayService(String v) { this.gatewayService = v; return this; }
         public Builder modelService(String v) { this.modelService = v; return this; }

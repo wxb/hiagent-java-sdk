@@ -52,11 +52,13 @@ public final class SseDecoder implements AutoCloseable {
                 continue;
             }
             if (line.startsWith("event:")) {
-                event = line.substring("event:".length()).trim();
+                String value = line.substring("event:".length());
+                event = (!value.isEmpty() && value.charAt(0) == ' ') ? value.substring(1) : value;
                 continue;
             }
             if (line.startsWith("data:")) {
-                data.add(line.substring("data:".length()).trim());
+                String value = line.substring("data:".length());
+                data.add((!value.isEmpty() && value.charAt(0) == ' ') ? value.substring(1) : value);
             }
         }
     }

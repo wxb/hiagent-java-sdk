@@ -3,10 +3,9 @@ package com.volcengine.hibot.v1;
 import com.volcengine.hibot.internal.SseDecoder;
 import com.volcengine.hibot.v1.types.V1Message;
 import com.volcengine.hibot.v1.types.V1SessionChatEvent;
+import okhttp3.Response;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.http.HttpResponse;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
@@ -17,7 +16,7 @@ import java.util.NoSuchElementException;
  * Always close — backed by an SSE response.
  */
 public final class V1ChatStream implements AutoCloseable, Iterable<V1SessionChatEvent> {
-    HttpResponse<InputStream> response;
+    Response response;
     SseDecoder decoder;
     V1SessionChatEvent current = new V1SessionChatEvent();
     V1Message finalMsg;
@@ -72,6 +71,9 @@ public final class V1ChatStream implements AutoCloseable, Iterable<V1SessionChat
             } catch (IOException ignore) {
                 // best-effort
             }
+        }
+        if (response != null) {
+            response.close();
         }
     }
 

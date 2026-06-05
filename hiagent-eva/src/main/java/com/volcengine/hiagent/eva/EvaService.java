@@ -130,7 +130,7 @@ public class EvaService {
             // 1. Create or Get evaluation task
             try {
                 System.out.printf("Check evaluation task status: %s\n", taskName);
-                var getTaskResp = this.evaClient.getEvaTask(new GetEvaTaskRequest(
+                EvaTaskItem getTaskResp = this.evaClient.getEvaTask(new GetEvaTaskRequest(
                         workspaceID,
                         EvaTaskSourceDataset,
                         null,
@@ -163,15 +163,15 @@ public class EvaService {
             System.out.printf("Task Collect Successfully: %s\n", finalTaskID);
             // 2. Get dataset column information
             System.out.println("Fetching dataset columns...");
-            var columns = this.evaClient.listEvaDatasetColumns(new ListEvaDatasetColumnsRequest(workspaceID, datasetID, datasetVersionID, false)).getColumns();
+            List<EvaDatasetColumn> columns = this.evaClient.listEvaDatasetColumns(new ListEvaDatasetColumnsRequest(workspaceID, datasetID, datasetVersionID, false)).getColumns();
             System.out.printf("Fetched %d columns", columns.size());
-            var columnID2Name = new HashMap<String, String>();
+            Map<String, String> columnID2Name = new HashMap<>();
             columns.forEach(column -> {
                 columnID2Name.put(column.getID(), column.getName());
             });
             // 3. Get dataset conversations
             System.out.println("Fetching dataset conversations...");
-            var listCases = this.evaClient.listEvaDatasetConversations(new ListEvaDatasetConversationsRequest(
+            ListEvaDatasetConversationsResponse listCases = this.evaClient.listEvaDatasetConversations(new ListEvaDatasetConversationsRequest(
                     workspaceID,
                     datasetID,
                     datasetVersionID,
@@ -186,16 +186,18 @@ public class EvaService {
             // 4. Execute inference and submit results
             System.out.println("Running inference and submitting results...");
             listCases.getItems().forEach(caseItem -> {
-                var caseData = new ArrayList<Map<String, Cell>>();
-                assert caseItem.getRepeatedData() != null;
+                List<Map<String, Cell>> caseData = new ArrayList<>();
+                if (caseItem.getRepeatedData() == null) {
+                    throw new IllegalStateException("Dataset case repeated data is missing: " + caseItem.getDatasetCaseID());
+                }
                 caseItem.getRepeatedData().forEach(repeatedDataItem -> {
-                    var rowData = new HashMap<String, Cell>();
+                    Map<String, Cell> rowData = new HashMap<>();
                     repeatedDataItem.keySet().forEach(key -> {
                         rowData.put(columnID2Name.get(key), repeatedDataItem.get(key));
                     });
                     caseData.add(rowData);
                 });
-                var appID = this.appID;
+                String appID = this.appID;
                 try {
                     this.evaClient.execEvaTaskRowGroup(new ExecEvaTaskRowGroupRequest(
                             workspaceID,
@@ -218,14 +220,14 @@ public class EvaService {
             });
             // 5. Wait for processing to complete
             System.out.println("Waiting for evaluation to complete...");
-            var terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
+            List<EvaTaskStatus> terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
                 add(EvaTaskStatusSucceed);
                 add(EvaTaskStatusPartialSucceed);
                 add(EvaTaskStatusFailed);
                 add(EvaTaskStatusCancelled);
                 add(EvaTaskStatusPaused);
             }};
-            var retryCount = 0;
+            int retryCount = 0;
             EvaTaskStatus taskStatus = null;
             do {
                 sleep(1000);
@@ -246,11 +248,13 @@ public class EvaService {
                 return null;
             }
             // 6. Get evaluation report
-            var getReportResp = this.evaClient.getEvaTaskReport(new GetEvaTaskReportRequest(
+            GetEvaTaskReportResponse getReportResp = this.evaClient.getEvaTaskReport(new GetEvaTaskReportRequest(
                     workspaceID,
                     taskID
             ));
-            assert getReportResp.getRules() != null;
+            if (getReportResp.getRules() == null) {
+                throw new IllegalStateException("Evaluation report rules are missing: " + taskID);
+            }
             System.out.printf("Evaluation completed with status: [%s]\n", getReportResp.getRules().isEmpty() ? "Running" : "Completed");
             return getReportResp;
         } catch (InterruptedException e) {
@@ -260,7 +264,7 @@ public class EvaService {
 
     public void pause(String taskName) throws ApiException {
         try {
-            var taskID = this.evaClient.getEvaTask(new GetEvaTaskRequest(
+            String taskID = this.evaClient.getEvaTask(new GetEvaTaskRequest(
                     workspaceID,
                     EvaTaskSourceDataset,
                     null,
@@ -270,10 +274,10 @@ public class EvaService {
                     workspaceID,
                     taskID
             ));
-            var terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
+            List<EvaTaskStatus> terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
                 add(EvaTaskStatusPaused);
             }};
-            var retryCount = 0;
+            int retryCount = 0;
             EvaTaskStatus taskStatus = null;
             do {
                 sleep(1000);
@@ -317,7 +321,7 @@ public class EvaService {
 
     public GetEvaTaskReportResponse evaluate(String taskName) throws ApiException {
         try {
-            var taskID = this.evaClient.getEvaTask(new GetEvaTaskRequest(
+            String taskID = this.evaClient.getEvaTask(new GetEvaTaskRequest(
                     workspaceID,
                     EvaTaskSourceDataset,
                     null,
@@ -328,14 +332,14 @@ public class EvaService {
                     taskID,
                     new EvaTaskRetryOption(true)
             ));
-            var terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
+            List<EvaTaskStatus> terminalEvaTaskStatus = new ArrayList<EvaTaskStatus>() {{
                 add(EvaTaskStatusSucceed);
                 add(EvaTaskStatusPartialSucceed);
                 add(EvaTaskStatusFailed);
                 add(EvaTaskStatusCancelled);
                 add(EvaTaskStatusPaused);
             }};
-            var retryCount = 0;
+            int retryCount = 0;
             EvaTaskStatus taskStatus = null;
             do {
                 sleep(1000);
@@ -355,11 +359,13 @@ public class EvaService {
                 System.out.println("Evaluation Paused");
                 return null;
             }
-            var getReportResp = this.evaClient.getEvaTaskReport(new GetEvaTaskReportRequest(
+            GetEvaTaskReportResponse getReportResp = this.evaClient.getEvaTaskReport(new GetEvaTaskReportRequest(
                     workspaceID,
                     taskID
             ));
-            assert getReportResp.getRules() != null;
+            if (getReportResp.getRules() == null) {
+                throw new IllegalStateException("Evaluation report rules are missing: " + taskID);
+            }
             System.out.printf("Evaluation completed with status: [%s]\n", getReportResp.getRules().isEmpty() ? "Running" : "Completed");
             return getReportResp;
         } catch (InterruptedException e) {

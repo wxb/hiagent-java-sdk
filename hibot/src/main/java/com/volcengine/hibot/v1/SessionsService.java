@@ -28,9 +28,12 @@ import com.volcengine.hibot.v1.types.V1SessionListParams;
 import com.volcengine.hibot.v1.types.V1SessionNewParams;
 import com.volcengine.hibot.v1.types.V1SessionTextDelta;
 
+import okhttp3.Response;
+import okhttp3.ResponseBody;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
@@ -289,19 +292,26 @@ public final class SessionsService {
 
         V1ChatStream stream = new V1ChatStream();
         try {
-            HttpResponse<InputStream> resp = requester.doStream(
+            Response resp = requester.doStream(
                     new RequestExecutor.Action(config.gatewayService(), Versions.CHAT, "Chat", body));
-            if (resp.statusCode() >= 400) {
+            if (resp.code() >= 400) {
                 byte[] payload;
-                try (InputStream is = resp.body()) {
-                    payload = is == null ? new byte[0] : is.readAllBytes();
+                try (ResponseBody responseBody = resp.body();
+                     InputStream is = responseBody == null ? null : responseBody.byteStream()) {
+                    payload = is == null ? new byte[0] : readAllBytes(is);
                 }
-                stream.err = new ApiException(resp.statusCode(), "", "",
+                stream.err = new ApiException(resp.code(), "", "",
                         new String(payload, StandardCharsets.UTF_8));
                 return stream;
             }
             stream.response = resp;
-            stream.decoder = new SseDecoder(resp.body());
+            ResponseBody responseBody = resp.body();
+            if (responseBody == null) {
+                stream.err = new IOException("hibot: stream response body is empty");
+                resp.close();
+                return stream;
+            }
+            stream.decoder = new SseDecoder(responseBody.byteStream());
         } catch (Exception e) {
             stream.err = e;
         }
@@ -313,6 +323,16 @@ public final class SessionsService {
     }
 
     private static boolean isEmpty(String s) { return s == null || s.isEmpty(); }
+
+    private static byte[] readAllBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out.write(buffer, 0, n);
+        }
+        return out.toByteArray();
+    }
 
     static V1SessionChatEvent decodeChatEvent(String eventName, String data) {
         V1SessionChatEvent ev = new V1SessionChatEvent();
