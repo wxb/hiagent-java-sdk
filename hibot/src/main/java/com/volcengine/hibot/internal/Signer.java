@@ -186,14 +186,23 @@ public final class Signer {
     }
 
     private static String decode(String s) {
-        return java.net.URLDecoder.decode(s, StandardCharsets.UTF_8);
+        try {
+            return java.net.URLDecoder.decode(s, StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            throw new IllegalStateException("UTF-8 encoding is not supported", e);
+        }
     }
 
     /** RFC3986-compliant encode used in canonical query string (space → %20). */
     static String signEncode(String s) {
         if (s == null || s.isEmpty()) return "";
         // URLEncoder encodes spaces as '+'; convert back to %20 and unencode "~".
-        String encoded = URLEncoder.encode(s, StandardCharsets.UTF_8);
+        String encoded;
+        try {
+            encoded = URLEncoder.encode(s, StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            throw new IllegalStateException("UTF-8 encoding is not supported", e);
+        }
         return encoded.replace("+", "%20").replace("*", "%2A").replace("%7E", "~");
     }
 

@@ -15,29 +15,36 @@ package com.volcengine.hiagent.api;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.Map;
 import java.util.StringJoiner;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /**
  * API请求的基类，提供通用的API调用方法
- * 使用Java标准库中的HttpClient作为HTTP客户端
+ * 使用OkHttp作为HTTP客户端，兼容Java 8
  */
 public abstract class BaseApiClient {
-    private HttpClient httpClient;
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
+    private static final String UTF_8 = StandardCharsets.UTF_8.name();
+
+    private OkHttpClient httpClient;
     private String baseUrl;
     private String apiKey;
     private static final String BASE_PATH = "/api/proxy/api/v1/";
@@ -53,40 +60,39 @@ public abstract class BaseApiClient {
      */
     public BaseApiClient(String baseUrl, String apiKey) {
         this.baseUrl = baseUrl;
-        this.httpClient = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(30))
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
                 .build();
         this.apiKey = apiKey;
     }
 
     /**
-     * 构造函数，支持自定义HttpClient
+     * 构造函数，支持自定义OkHttpClient
      *
      * @param baseUrl    API基础URL
-     * @param httpClient 自定义HttpClient实例
+     * @param httpClient 自定义OkHttpClient实例
      */
-    public BaseApiClient(String baseUrl, String apiKey, HttpClient httpClient) {
+    public BaseApiClient(String baseUrl, String apiKey, OkHttpClient httpClient) {
         this.baseUrl = baseUrl;
         this.httpClient = httpClient;
         this.apiKey = apiKey;
     }
 
     /**
-     * 获取HttpClient实例
+     * 获取OkHttpClient实例
      *
-     * @return HttpClient实例
+     * @return OkHttpClient实例
      */
-    public HttpClient getHttpClient() {
+    public OkHttpClient getHttpClient() {
         return httpClient;
     }
 
     /**
-     * 设置HttpClient实例
+     * 设置OkHttpClient实例
      *
-     * @param httpClient HttpClient实例
+     * @param httpClient OkHttpClient实例
      */
-    public void setHttpClient(HttpClient httpClient) {
+    public void setHttpClient(OkHttpClient httpClient) {
         this.httpClient = httpClient;
     }
 
@@ -140,7 +146,7 @@ public abstract class BaseApiClient {
      * @throws ApiException         API调用异常
      */
     protected <T> T post(String endpoint, Object requestBody, Class<T> responseClass,
-                         Map<String, String> customHeaders)
+            Map<String, String> customHeaders)
             throws IOException, InterruptedException, ApiException {
         // 构建完整URL
         String url = buildUrl(endpoint);
@@ -149,23 +155,23 @@ public abstract class BaseApiClient {
         String requestBodyJson = GSON.toJson(requestBody);
 
         // 构建请求
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
                 .header("Apikey", apiKey)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson));
+                .post(RequestBody.create(requestBodyJson, JSON_MEDIA_TYPE));
 
         // 添加自定义请求头
         addCustomHeaders(requestBuilder, customHeaders);
 
-        HttpRequest request = requestBuilder.build();
+        Request request = requestBuilder.build();
 
         // 发送请求并获取响应
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // 处理响应
-        return handleResponse(response, responseClass);
+        try (Response response = httpClient.newCall(request).execute()) {
+            ResponseBody body = response.body();
+            return handleResponse(response.code(), body == null ? "" : body.string(), responseClass);
+        }
     }
 
     /**
@@ -180,7 +186,7 @@ public abstract class BaseApiClient {
      * @throws ApiException         API调用异常
      */
     protected <R> Iterable<R> postStream(String endpoint, Object requestBody,
-                                         Function<String, R> dataProcessor)
+            Function<String, R> dataProcessor)
             throws IOException, InterruptedException, ApiException {
         // 构建完整URL
         String url = buildUrl(endpoint);
@@ -189,46 +195,70 @@ public abstract class BaseApiClient {
         String requestBodyJson = GSON.toJson(requestBody);
 
         // 构建请求
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
                 .header("Apikey", apiKey)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson));
+                .post(RequestBody.create(requestBodyJson, JSON_MEDIA_TYPE));
 
-        HttpRequest request = requestBuilder.build();
+        Request request = requestBuilder.build();
 
-        BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        BlockingQueue<SSEMessage> queue = new LinkedBlockingQueue<>();
         // 异步发送请求并处理响应
-        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
-                .thenAccept(response -> {
-                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (!line.isBlank() && line.startsWith(DATA_MARKER)) {
-                                line = line.substring(DATA_MARKER.length()).trim();
-                                // 兼容v1版本api，格式：data:data: {}
-                                if (line.startsWith(DATA_MARKER)) {
-                                    line = line.substring(DATA_MARKER.length()).trim();
-                                }
-                                // 提取 SSE 数据并放入队列
-                                queue.put(line);
-                            }
-                        }
-                        // SSE 流结束，放入结束标志
-                        queue.put(END_MARKER);
-                    } catch (Exception e) {
-                        try {
-                            queue.put(END_MARKER); // 异常时也结束
-                        } catch (InterruptedException ex) {
-                            Thread.currentThread().interrupt();
-                        }
-                        throw new RuntimeException(e);
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                putSSEMessage(queue, SSEMessage.error(e));
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                try (Response resp = response;
+                        ResponseBody responseBody = resp.body()) {
+                    if (resp.code() < 200 || resp.code() >= 300) {
+                        String errorBody = responseBody == null ? "" : responseBody.string();
+                        putSSEMessage(queue, SSEMessage.error(
+                                new ApiException("API调用失败: " + resp.code() + " - " + errorBody)));
+                        return;
                     }
-                });
+
+                    BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(responseBody == null
+                                    ? new java.io.ByteArrayInputStream(new byte[0])
+                                    : responseBody.byteStream(), StandardCharsets.UTF_8));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (!line.trim().isEmpty() && line.startsWith(DATA_MARKER)) {
+                            line = line.substring(DATA_MARKER.length());
+                            if (!line.isEmpty() && line.charAt(0) == ' ') {
+                                line = line.substring(1);
+                            }
+                            // 兼容v1版本api，格式：data:data: {}
+                            if (line.startsWith(DATA_MARKER)) {
+                                line = line.substring(DATA_MARKER.length());
+                                if (!line.isEmpty() && line.charAt(0) == ' ') {
+                                    line = line.substring(1);
+                                }
+                            }
+                            if (END_MARKER.equals(line.trim())) {
+                                putSSEMessage(queue, SSEMessage.end());
+                                return;
+                            }
+                            // 提取 SSE 数据并放入队列
+                            putSSEMessage(queue, SSEMessage.data(line));
+                        }
+                    }
+                    // SSE 流结束，放入结束标志
+                    putSSEMessage(queue, SSEMessage.end());
+                } catch (Exception e) {
+                    putSSEMessage(queue, SSEMessage.error(e));
+                }
+            }
+        });
 
         // 返回一个 Iterable，支持 for 循环消费
-        return () -> new SSEIterator<>(queue, END_MARKER, dataProcessor);
+        return () -> new SSEIterator<>(queue, dataProcessor);
     }
 
     /**
@@ -263,29 +293,29 @@ public abstract class BaseApiClient {
      * @throws ApiException         API调用异常
      */
     protected <T> T get(String endpoint, Map<String, String> queryParams, Class<T> responseClass,
-                        Map<String, String> customHeaders)
+            Map<String, String> customHeaders)
             throws IOException, InterruptedException, ApiException {
         // 构建完整URL，包含查询参数
         String url = buildUrlWithQueryParams(endpoint, queryParams);
 
         // 构建请求
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
                 .header("Apikey", apiKey)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
-                .GET();
+                .get();
 
         // 添加自定义请求头
         addCustomHeaders(requestBuilder, customHeaders);
 
-        HttpRequest request = requestBuilder.build();
+        Request request = requestBuilder.build();
 
         // 发送请求并获取响应
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // 处理响应
-        return handleResponse(response, responseClass);
+        try (Response response = httpClient.newCall(request).execute()) {
+            ResponseBody body = response.body();
+            return handleResponse(response.code(), body == null ? "" : body.string(), responseClass);
+        }
     }
 
     /**
@@ -320,7 +350,7 @@ public abstract class BaseApiClient {
      * @throws ApiException         API调用异常
      */
     protected <T> T put(String endpoint, Object requestBody, Class<T> responseClass,
-                        Map<String, String> customHeaders)
+            Map<String, String> customHeaders)
             throws IOException, InterruptedException, ApiException {
         // 构建完整URL
         String url = buildUrl(endpoint);
@@ -329,23 +359,23 @@ public abstract class BaseApiClient {
         String requestBodyJson = GSON.toJson(requestBody);
 
         // 构建请求
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
                 .header("Apikey", apiKey)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
-                .PUT(HttpRequest.BodyPublishers.ofString(requestBodyJson));
+                .put(RequestBody.create(requestBodyJson, JSON_MEDIA_TYPE));
 
         // 添加自定义请求头
         addCustomHeaders(requestBuilder, customHeaders);
 
-        HttpRequest request = requestBuilder.build();
+        Request request = requestBuilder.build();
 
         // 发送请求并获取响应
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // 处理响应
-        return handleResponse(response, responseClass);
+        try (Response response = httpClient.newCall(request).execute()) {
+            ResponseBody body = response.body();
+            return handleResponse(response.code(), body == null ? "" : body.string(), responseClass);
+        }
     }
 
     /**
@@ -395,29 +425,29 @@ public abstract class BaseApiClient {
      * @throws ApiException         API调用异常
      */
     protected <T> T delete(String endpoint, Map<String, String> queryParams, Class<T> responseClass,
-                           Map<String, String> customHeaders)
+            Map<String, String> customHeaders)
             throws IOException, InterruptedException, ApiException {
         // 构建完整URL，包含查询参数
         String url = buildUrlWithQueryParams(endpoint, queryParams);
 
         // 构建请求
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
                 .header("Apikey", apiKey)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
-                .DELETE();
+                .delete();
 
         // 添加自定义请求头
         addCustomHeaders(requestBuilder, customHeaders);
 
-        HttpRequest request = requestBuilder.build();
+        Request request = requestBuilder.build();
 
         // 发送请求并获取响应
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // 处理响应
-        return handleResponse(response, responseClass);
+        try (Response response = httpClient.newCall(request).execute()) {
+            ResponseBody body = response.body();
+            return handleResponse(response.code(), body == null ? "" : body.string(), responseClass);
+        }
     }
 
     /**
@@ -447,8 +477,7 @@ public abstract class BaseApiClient {
         if (queryParams != null && !queryParams.isEmpty()) {
             StringJoiner joiner = new StringJoiner("&", "?", "");
             for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-                joiner.add(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8) + "=" +
-                        URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+                joiner.add(encodeParam(entry.getKey()) + "=" + encodeParam(entry.getValue()));
             }
             url += joiner.toString();
         }
@@ -465,10 +494,7 @@ public abstract class BaseApiClient {
      * @return 响应对象
      * @throws ApiException API调用异常
      */
-    private <T> T handleResponse(HttpResponse<String> response, Class<T> responseClass) throws ApiException {
-        int statusCode = response.statusCode();
-        String responseBody = response.body();
-
+    private <T> T handleResponse(int statusCode, String responseBody, Class<T> responseClass) throws ApiException {
         // 检查响应状态码
         if (statusCode < 200 || statusCode >= 300) {
             throw new ApiException("API调用失败: " + statusCode + " - " + responseBody);
@@ -488,11 +514,19 @@ public abstract class BaseApiClient {
      * @param requestBuilder 请求构建器
      * @param customHeaders  自定义请求头
      */
-    private void addCustomHeaders(HttpRequest.Builder requestBuilder, Map<String, String> customHeaders) {
+    private void addCustomHeaders(Request.Builder requestBuilder, Map<String, String> customHeaders) {
         if (customHeaders != null && !customHeaders.isEmpty()) {
             for (Map.Entry<String, String> entry : customHeaders.entrySet()) {
                 requestBuilder.header(entry.getKey(), entry.getValue());
             }
+        }
+    }
+
+    private String encodeParam(String value) {
+        try {
+            return URLEncoder.encode(value, UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("UTF-8 encoding is not supported", e);
         }
     }
 
@@ -513,15 +547,45 @@ public abstract class BaseApiClient {
      * 自定义SSE迭代器类
      */
 
-    private static class SSEIterator<R> implements java.util.Iterator<R> {
-        private final BlockingQueue<String> queue;
-        private final String END_MARKER;
-        private final Function<String, R> dataProcessor;
-        private String nextItem;
+    private static void putSSEMessage(BlockingQueue<SSEMessage> queue, SSEMessage message) {
+        try {
+            queue.put(message);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 
-        public SSEIterator(BlockingQueue<String> queue, String endMarker, Function<String, R> dataProcessor) {
+    private static class SSEMessage {
+        private final String data;
+        private final Throwable error;
+        private final boolean end;
+
+        private SSEMessage(String data, Throwable error, boolean end) {
+            this.data = data;
+            this.error = error;
+            this.end = end;
+        }
+
+        private static SSEMessage data(String data) {
+            return new SSEMessage(data, null, false);
+        }
+
+        private static SSEMessage error(Throwable error) {
+            return new SSEMessage(null, error, false);
+        }
+
+        private static SSEMessage end() {
+            return new SSEMessage(null, null, true);
+        }
+    }
+
+    private static class SSEIterator<R> implements java.util.Iterator<R> {
+        private final BlockingQueue<SSEMessage> queue;
+        private final Function<String, R> dataProcessor;
+        private SSEMessage nextItem;
+
+        public SSEIterator(BlockingQueue<SSEMessage> queue, Function<String, R> dataProcessor) {
             this.queue = queue;
-            this.END_MARKER = endMarker;
             this.dataProcessor = dataProcessor;
         }
 
@@ -535,7 +599,10 @@ public abstract class BaseApiClient {
                     return false;
                 }
             }
-            return !END_MARKER.equals(nextItem); // 判断是否结束
+            if (nextItem.error != null) {
+                throw toRuntimeException(nextItem.error);
+            }
+            return !nextItem.end; // 判断是否结束
         }
 
         @Override
@@ -543,9 +610,16 @@ public abstract class BaseApiClient {
             if (!hasNext()) {
                 throw new java.util.NoSuchElementException();
             }
-            String rawData = nextItem;
+            String rawData = nextItem.data;
             nextItem = null; // 清空当前项，准备读取下一项
             return dataProcessor.apply(rawData); // 使用处理函数转换数据
+        }
+
+        private RuntimeException toRuntimeException(Throwable error) {
+            if (error instanceof RuntimeException) {
+                return (RuntimeException) error;
+            }
+            return new RuntimeException(error);
         }
     }
 }

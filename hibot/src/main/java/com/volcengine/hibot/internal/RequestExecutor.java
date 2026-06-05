@@ -4,22 +4,24 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volcengine.hibot.ApiException;
 import com.volcengine.hibot.HibotConfig;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Signs, sends, and decodes TOP Action requests.
  *
- * <p>Mirrors go/hibot/internal/request/request.go.
+ * Mirrors go/hibot/internal/request/request.go.
  */
 public final class RequestExecutor {
     private static final ObjectMapper MAPPER = ResponseDecoder.mapper();
@@ -29,10 +31,10 @@ public final class RequestExecutor {
     private final String secretKey;
     private final String workspaceId;
     private final String region;
-    private final HttpClient httpClient;
+    private final OkHttpClient httpClient;
 
     public RequestExecutor(String endpoint, String accessKey, String secretKey,
-                           String workspaceId, String region, HttpClient httpClient) {
+            String workspaceId, String region, OkHttpClient httpClient) {
         this.endpoint = endpoint;
         this.accessKey = accessKey;
         this.secretKey = secretKey;
@@ -64,43 +66,53 @@ public final class RequestExecutor {
     /** Send a JSON Action request and decode the wrapped Result. */
     public <T> T doAction(Action req, TypeReference<T> resultType) {
         byte[] body = marshalActionBody(req.body);
-        HttpRequest httpRequest = buildHttpRequest(req, body, "application/json", null);
-        HttpResponse<byte[]> resp;
-        try {
-            resp = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofByteArray());
+        Request httpRequest = buildHttpRequest(req, body, "application/json", null);
+        try (Response resp = httpClient.newCall(httpRequest).execute()) {
+            ResponseBody responseBody = resp.body();
+            byte[] payload = responseBody == null ? new byte[0] : responseBody.bytes();
+            return ResponseDecoder.decode(resp.code(), payload, resultType);
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("hibot: send request: " + e.getMessage(), e);
         }
-        return ResponseDecoder.decode(resp.statusCode(), resp.body(), resultType);
     }
 
     /** Send a raw (non-JSON-encoded) Action request — used for UploadBlob. */
     public <T> T doRawAction(Action req, byte[] body, String contentType,
-                             Map<String, String> extraQuery, TypeReference<T> resultType) {
-        HttpRequest httpRequest = buildHttpRequest(req, body == null ? new byte[0] : body, contentType, extraQuery);
-        HttpResponse<byte[]> resp;
-        try {
-            resp = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofByteArray());
+            Map<String, String> extraQuery, TypeReference<T> resultType) {
+        Request httpRequest = buildHttpRequest(req, body == null ? new byte[0] : body, contentType, extraQuery);
+        try (Response resp = httpClient.newCall(httpRequest).execute()) {
+            ResponseBody responseBody = resp.body();
+            byte[] payload = responseBody == null ? new byte[0] : responseBody.bytes();
+            return ResponseDecoder.decode(resp.code(), payload, resultType);
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("hibot: send request: " + e.getMessage(), e);
         }
-        return ResponseDecoder.decode(resp.statusCode(), resp.body(), resultType);
     }
 
-    /** Send a streaming Action request (text/event-stream) and return the raw response. */
-    public HttpResponse<InputStream> doStream(Action req) {
+    /**
+     * Send a streaming Action request (text/event-stream) and return the raw
+     * response.
+     */
+    public Response doStream(Action req) {
         byte[] body = marshalActionBody(req.body);
         req.stream = true;
-        HttpRequest httpRequest = buildHttpRequest(req, body, "application/json", null);
+        Request httpRequest = buildHttpRequest(req, body, "application/json", null);
         try {
             // For streaming we want no client-level timeout to prevent SSE getting cut off.
-            return httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            OkHttpClient streamClient = httpClient.newBuilder()
+                    .readTimeout(60, TimeUnit.MINUTES)
+                    .build();
+            return streamClient.newCall(httpRequest).execute();
         } catch (Exception e) {
             throw new RuntimeException("hibot: send stream request: " + e.getMessage(), e);
         }
     }
 
-    private HttpRequest buildHttpRequest(Action req, byte[] body, String contentType, Map<String, String> extraQuery) {
+    private Request buildHttpRequest(Action req, byte[] body, String contentType, Map<String, String> extraQuery) {
         StringBuilder url = new StringBuilder(endpoint);
         // Strip trailing slash on endpoint.
         while (url.length() > 0 && url.charAt(url.length() - 1) == '/') {
@@ -111,14 +123,14 @@ public final class RequestExecutor {
         if ("up".equals(req.service)) {
             url.append("/up");
         }
-        url.append("?Action=").append(URLEncoder.encode(req.action, StandardCharsets.UTF_8));
-        url.append("&Version=").append(URLEncoder.encode(req.version, StandardCharsets.UTF_8));
+        url.append("?Action=").append(encode(req.action));
+        url.append("&Version=").append(encode(req.version));
         if (extraQuery != null) {
             for (Map.Entry<String, String> e : extraQuery.entrySet()) {
                 url.append('&')
-                        .append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8))
+                        .append(encode(e.getKey()))
                         .append('=')
-                        .append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+                        .append(encode(e.getValue()));
             }
         }
 
@@ -131,8 +143,10 @@ public final class RequestExecutor {
         Signer signer = new Signer(accessKey, secretKey, region, req.service);
         Signer.Signed signed = signer.sign("POST", uri, headersForSign, body, null);
 
-        HttpRequest.Builder b = HttpRequest.newBuilder(uri)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+        RequestBody requestBody = RequestBody.create(MediaType.parse(ct), body);
+        Request.Builder b = new Request.Builder()
+                .url(url.toString())
+                .post(requestBody)
                 .header("Content-Type", ct)
                 .header("X-Top-Service", req.service)
                 .header("X-Date", signed.xDate)
@@ -140,9 +154,6 @@ public final class RequestExecutor {
                 .header("Authorization", signed.authorization);
         if (req.stream) {
             b.header("Accept", "text/event-stream");
-            b.timeout(Duration.ofMinutes(60));
-        } else {
-            b.timeout(Duration.ofSeconds(60));
         }
         return b.build();
     }
@@ -155,8 +166,10 @@ public final class RequestExecutor {
         } else if (v instanceof Map) {
             body = new LinkedHashMap<>((Map<String, Object>) v);
         } else {
-            body = MAPPER.convertValue(v, new TypeReference<Map<String, Object>>() {});
-            if (body == null) body = new LinkedHashMap<>();
+            body = MAPPER.convertValue(v, new TypeReference<Map<String, Object>>() {
+            });
+            if (body == null)
+                body = new LinkedHashMap<>();
         }
         injectWorkspace(body);
         try {
@@ -167,7 +180,8 @@ public final class RequestExecutor {
     }
 
     private void injectWorkspace(Map<String, Object> body) {
-        if (workspaceId == null || workspaceId.isEmpty()) return;
+        if (workspaceId == null || workspaceId.isEmpty())
+            return;
         Object existing = body.get("WorkspaceID");
         if (existing == null || (existing instanceof String && ((String) existing).isEmpty())) {
             body.put("WorkspaceID", workspaceId);
@@ -175,7 +189,18 @@ public final class RequestExecutor {
     }
 
     /** Convert the body of a non-2xx streaming response into an ApiException. */
-    public static ApiException toApiException(HttpResponse<?> resp, byte[] body) {
-        return new ApiException(resp.statusCode(), "", "", new String(body, StandardCharsets.UTF_8));
+    public static ApiException toApiException(Response resp, byte[] body) {
+        return new ApiException(resp.code(), "", "", new String(body, StandardCharsets.UTF_8));
+    }
+
+    private static String encode(String value) {
+        if (value == null || value.isEmpty())
+            return "";
+        try {
+            String encoded = URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+            return encoded.replace("+", "%20").replace("*", "%2A").replace("%7E", "~");
+        } catch (Exception e) {
+            throw new IllegalStateException("UTF-8 encoding is not supported", e);
+        }
     }
 }

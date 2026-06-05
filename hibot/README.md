@@ -1,6 +1,6 @@
 # Hibot Java SDK
 
-Java 17+ client for the Hibot Managed Agent platform. Mirrors the Go SDK
+Java 8+ client for the Hibot Managed Agent platform. Mirrors the Go SDK
 (`go/hibot/v1`) resource layout and request/response semantics, signing every
 request with the VOLC v4 algorithm.
 
@@ -53,23 +53,23 @@ HibotConfig cfg = HibotConfig.builder()
 
 try (Hibot client = new Hibot(cfg)) {
     // Resource services
-    var agent = client.v1.agents.create(V1AgentNewParams.builder()
+    V1Agent agent = client.v1.agents.create(V1AgentNewParams.builder()
         .name("demo-agent")
         .build());
 
-    var session = client.v1.sessions.create(V1SessionNewParams.builder()
+    V1Session session = client.v1.sessions.create(V1SessionNewParams.builder()
         .agentId(agent.getAgentId())
         .build());
 
     // Streaming chat: AutoCloseable + Iterable<V1SessionChatEvent>
-    try (var stream = client.v1.sessions.chatStreaming(V1SessionChatParams.builder()
+    try (V1ChatStream stream = client.v1.sessions.chatStreaming(V1SessionChatParams.builder()
             .sessionId(session.getSessionId())
             .userMessage("hello")
             .build())) {
         for (V1SessionChatEvent event : stream) {
             System.out.println(event.getEvent() + " " + event.getDelta());
         }
-        var finalMessage = stream.finalMessage();
+        V1Message finalMessage = stream.finalMessage();
         System.out.println("final: " + finalMessage.getContent());
     }
 }
@@ -125,8 +125,8 @@ below for reference.
   param types yields the same on-the-wire shape as Go's `omitempty`. Nested
   arrays/maps are emitted via service-level `LinkedHashMap` builders to keep
   PascalCase keys identical to TOP IDL.
-- **No `context.Context`.** `RequestExecutor` uses `HttpClient` with explicit
-  per-call timeouts; streaming reads use a 60-minute timeout.
+- **No `context.Context`.** `RequestExecutor` uses `OkHttpClient`; streaming
+  reads are exposed as an `InputStream`-backed SSE iterator.
 - **Streaming iteration.** `V1ChatStream` exposes both an imperative
   `next()/current()` loop *and* `Iterable<V1SessionChatEvent>` so it plays well
   with `for-each` and try-with-resources. Calling `next()` after iterator

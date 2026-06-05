@@ -25,6 +25,6 @@ public final class Hibot implements AutoCloseable {
 
     @Override
     public void close() {
-        // HttpClient does not require explicit close on JDK 17.
+        // OkHttpClient does not require explicit close for normal SDK usage.
     }
 }

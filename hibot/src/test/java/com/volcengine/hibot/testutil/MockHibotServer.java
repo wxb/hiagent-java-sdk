@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.volcengine.hibot.Hibot;
 import com.volcengine.hibot.HibotConfig;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -63,7 +64,7 @@ public final class MockHibotServer implements AutoCloseable {
         URI uri = exchange.getRequestURI();
         byte[] body;
         try (InputStream is = exchange.getRequestBody()) {
-            body = is.readAllBytes();
+            body = readAllBytes(is);
         }
         RecordedRequest rec = new RecordedRequest(
                 exchange.getRequestMethod(),
@@ -108,6 +109,16 @@ public final class MockHibotServer implements AutoCloseable {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static byte[] readAllBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out.write(buffer, 0, n);
+        }
+        return out.toByteArray();
     }
 
     @Override

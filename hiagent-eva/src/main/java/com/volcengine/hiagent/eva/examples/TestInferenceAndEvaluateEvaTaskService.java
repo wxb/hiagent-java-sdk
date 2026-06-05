@@ -21,6 +21,7 @@ import com.volcengine.hiagent.api.model.base.*;
 import com.volcengine.hiagent.eva.EvaService;
 import com.volcengine.hiagent.eva.InferenceFunction;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -136,7 +137,7 @@ public class TestInferenceAndEvaluateEvaTaskService {
                         .warning("规则参数文件不存在: " + ruleParamFilePath + "，ruleParams 将传入 null");
                 return null;
             }
-            String json = Files.readString(path);
+            String json = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
             ObjectMapper mapper = new ObjectMapper();
             return mapper.readValue(json, new TypeReference<List<EvaTaskRuleParams>>() {
             });
