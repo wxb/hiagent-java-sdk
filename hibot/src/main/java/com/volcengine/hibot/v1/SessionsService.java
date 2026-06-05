@@ -237,55 +237,39 @@ public final class SessionsService {
         return r;
     }
 
-    /** Send a chat message and block until the final response arrives. */
+    /**
+     * 发送一条 chat 消息并阻塞等待最终响应。
+     *
+     * <p>对应服务端 {@code Stream=false} 同步分支：gateway 内部聚合所有
+     * {@code message_completed.content}，run_completed 后一次性返回普通
+     * HTTP JSON {@code ChatSyncResponse{Message}}。SDK 把它包装成 V1Message
+     * 返回；message id / runId / files 等字段服务端不再下发，调用方如需可走
+     * {@link #listMessages} / {@link #getMessage} 二次拉取。
+     *
+     * <p>非流式路径下若收到审批请求，gateway 仅在 {@code Approve=="all"} 时自动放行；
+     * 因此当调用方未显式设置 {@link V1SessionChatParams#approve} 时，SDK 默认下发
+     * {@code "all"} 以维持批回复可用。
+     */
     public V1Message chat(String sessionId, V1SessionChatParams params) {
-        try (V1ChatStream stream = chatStream(sessionId, params, true)) {
-            while (stream.next()) {
-                V1SessionChatEvent ev = stream.current();
-                if (V1Constants.V1_SESSION_CHAT_EVENT_FAILED.equals(ev.type)) {
-                    throw new IllegalStateException("hibot: chat failed: " + (ev.error == null ? "" : ev.error.message));
-                }
-            }
-            Throwable err = stream.err();
-            if (err != null) {
-                if (err instanceof RuntimeException) throw (RuntimeException) err;
-                throw new RuntimeException(err);
-            }
-            return stream.finalMessage();
+        if (params == null) params = new V1SessionChatParams();
+        Map<String, Object> body = buildChatBody(sessionId, params);
+        body.put("Stream", Boolean.FALSE);
+        if (isEmpty((String) body.get("Approve"))) {
+            body.put("Approve", "all");
         }
+        ChatSyncResponse resp = requester.doAction(
+                new RequestExecutor.Action(config.gatewayService(), Versions.CHAT, "Chat", body),
+                new TypeReference<ChatSyncResponse>() {});
+        V1Message m = new V1Message();
+        m.role = "assistant";
+        m.content = resp == null || resp.message == null ? "" : resp.message;
+        return m;
     }
 
     /** Send a chat message in streaming mode. */
     public V1ChatStream chatStreaming(String sessionId, V1SessionChatParams params) {
-        return chatStream(sessionId, params, false);
-    }
-
-    /**
-     * Chat 与 chatStreaming 的共享底座。autoApproveAll=true 时自动注入 Approve="all"：
-     * webchat 非流式聚合调用方在收到批回复前不需要再走显式审批；流式订阅方仍可通过
-     * SSE approval_request 事件参与人审。
-     */
-    private V1ChatStream chatStream(String sessionId, V1SessionChatParams params, boolean autoApproveAll) {
         if (params == null) params = new V1SessionChatParams();
-        String agentId = params.agentId;
-        if (isEmpty(agentId)) {
-            agentId = sessionAgents.get(sessionId);
-        }
-        Map<String, Object> body = Bodies.map();
-        Bodies.putIfNotEmpty(body, "WorkspaceID", params.workspaceId);
-        body.put("SessionID", sessionId);
-        Bodies.putIfNotEmpty(body, "AgentID", agentId);
-        // Content 允许为空：当 files 非空时仅传文件即可。
-        if (params.input != null) {
-            body.put("Content", params.input);
-        }
-        if (params.files != null && !params.files.isEmpty()) {
-            body.put("Files", params.files);
-        }
-        Bodies.putIfNotEmpty(body, "ClientMessageID", params.clientMessageId);
-        if (autoApproveAll) {
-            body.put("Approve", "all");
-        }
+        Map<String, Object> body = buildChatBody(sessionId, params);
 
         V1ChatStream stream = new V1ChatStream();
         try {
@@ -306,6 +290,28 @@ public final class SessionsService {
             stream.err = e;
         }
         return stream;
+    }
+
+    /** 构造 Chat / ChatStreaming 共用的请求体。 */
+    private Map<String, Object> buildChatBody(String sessionId, V1SessionChatParams params) {
+        String agentId = params.agentId;
+        if (isEmpty(agentId)) {
+            agentId = sessionAgents.get(sessionId);
+        }
+        Map<String, Object> body = Bodies.map();
+        Bodies.putIfNotEmpty(body, "WorkspaceID", params.workspaceId);
+        body.put("SessionID", sessionId);
+        Bodies.putIfNotEmpty(body, "AgentID", agentId);
+        // Content 允许为空：当 files 非空时仅传文件即可。
+        if (params.input != null) {
+            body.put("Content", params.input);
+        }
+        if (params.files != null && !params.files.isEmpty()) {
+            body.put("Files", params.files);
+        }
+        Bodies.putIfNotEmpty(body, "ClientMessageID", params.clientMessageId);
+        Bodies.putIfNotEmpty(body, "Approve", params.approve);
+        return body;
     }
 
     String agentIdForSession(String sessionId) {

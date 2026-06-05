@@ -177,12 +177,9 @@ class SessionsServiceTest {
         server.onRequest((rec, ex) -> {
             try {
                 if ("Chat".equals(rec.action())) {
-                    ex.getResponseHeaders().add("Content-Type", "text/event-stream");
-                    ex.sendResponseHeaders(200, 0);
-                    try (OutputStream os = ex.getResponseBody()) {
-                        writeFrame(os, "message_delta", "{\"delta\":{\"text\":\"x\"}}");
-                        writeFrame(os, "message_completed", "{\"message_id\":\"m-7\",\"content\":\"final\"}");
-                    }
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("Message", "final");
+                    MockHibotServer.writeOk(ex, result);
                 } else {
                     MockHibotServer.writeOk(ex, new LinkedHashMap<>());
                 }
@@ -194,8 +191,14 @@ class SessionsServiceTest {
         p.agentId = "ag";
         p.input = "hi";
         V1Message m = client.v1.sessions.chat("ses-existing", p);
-        assertEquals("m-7", m.id);
+        // 同步聚合契约：服务端只回 ChatSyncResponse{Message}，SDK 包装成
+        // 一个仅含 role/content 的 V1Message；message id 不再下发。
         assertEquals("final", m.content);
+        assertEquals("assistant", m.role);
+        // 请求体必须显式带 Stream=false。
+        JsonNode chatBody = server.last().bodyJson();
+        assertNotNull(chatBody.get("Stream"));
+        assertFalse(chatBody.get("Stream").asBoolean());
     }
 
     @Test

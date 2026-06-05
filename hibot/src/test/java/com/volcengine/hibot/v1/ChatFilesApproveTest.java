@@ -16,13 +16,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** 验证 #1 Approve 行为 + #2 Files / 空 Content 支持。 */
+/**
+ * 验证 chat 同步聚合契约：
+ *   1. 非流式 chat 必须发出 {@code Stream=false}，并默认带 {@code Approve="all"}；
+ *   2. 流式 chatStreaming 不发 {@code Stream}/{@code Approve}；
+ *   3. Files 与空 Content 在两条路径上都能透传。
+ */
 class ChatFilesApproveTest {
     private MockHibotServer server;
     private Hibot client;
@@ -40,11 +46,11 @@ class ChatFilesApproveTest {
     }
 
     @Test
-    void chat_nonStreaming_injectsApproveAll() throws Exception {
+    void chat_nonStreaming_sendsStreamFalseAndDefaultsApproveAll() throws Exception {
         server.onRequest((rec, ex) -> {
             try {
                 if ("Chat".equals(rec.action())) {
-                    sseChat(ex);
+                    syncChat(ex, "ok");
                 } else {
                     MockHibotServer.writeOk(ex, new LinkedHashMap<>());
                 }
@@ -56,14 +62,16 @@ class ChatFilesApproveTest {
         p.agentId = "ag";
         p.input = "hi";
         V1Message m = client.v1.sessions.chat("ses", p);
-        assertEquals("m-1", m.id);
-        // 请求 body 必须显式带 Approve="all"，避免批回复时再走人工审批。
+        assertEquals("ok", m.content);
         JsonNode body = lastChatBody();
-        assertEquals("all", body.get("Approve").asText());
+        assertNotNull(body.get("Stream"), "非流式 chat 必须发出 Stream 字段");
+        assertFalse(body.get("Stream").asBoolean(), "非流式 chat 必须发出 Stream=false");
+        assertEquals("all", body.get("Approve").asText(),
+                "非流式 chat 在调用方未显式指定 approve 时应默认下发 \"all\"");
     }
 
     @Test
-    void chatStreaming_doesNotInjectApprove() throws Exception {
+    void chatStreaming_doesNotInjectApproveOrStream() throws Exception {
         server.onRequest((rec, ex) -> {
             try {
                 if ("Chat".equals(rec.action())) {
@@ -85,6 +93,7 @@ class ChatFilesApproveTest {
         }
         JsonNode body = lastChatBody();
         assertFalse(body.has("Approve"), "streaming 不应自动注入 Approve");
+        assertFalse(body.has("Stream"), "streaming 不应主动下发 Stream（服务端默认即流式）");
     }
 
     @Test
@@ -92,7 +101,7 @@ class ChatFilesApproveTest {
         server.onRequest((rec, ex) -> {
             try {
                 if ("Chat".equals(rec.action())) {
-                    sseChat(ex);
+                    syncChat(ex, "");
                 } else {
                     MockHibotServer.writeOk(ex, new LinkedHashMap<>());
                 }
@@ -127,7 +136,6 @@ class ChatFilesApproveTest {
     }
 
     private JsonNode lastChatBody() {
-        // 找到最后一次 Chat 请求的 body。
         for (int i = server.recorded().size() - 1; i >= 0; i--) {
             MockHibotServer.RecordedRequest r = server.recorded().get(i);
             if ("Chat".equals(r.action())) {
@@ -135,6 +143,13 @@ class ChatFilesApproveTest {
             }
         }
         throw new IllegalStateException("no Chat request recorded");
+    }
+
+    /** 同步聚合分支：返回 {@code ChatSyncResponse{Message}} 普通 JSON。 */
+    private static void syncChat(com.sun.net.httpserver.HttpExchange ex, String content) throws IOException {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("Message", content);
+        MockHibotServer.writeOk(ex, result);
     }
 
     private static void sseChat(com.sun.net.httpserver.HttpExchange ex) throws IOException {

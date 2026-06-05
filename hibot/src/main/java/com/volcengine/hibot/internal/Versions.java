@@ -13,7 +13,7 @@ public final class Versions {
 
     /** API Versions registered on TOP. */
     public static final String SERVER = "2026-04-23";
-    public static final String CHAT = "2026-05-11";
+    public static final String CHAT = "2026-04-23";
     public static final String MODEL = "2023-08-01";
     public static final String UP = "2022-01-01";
 }
