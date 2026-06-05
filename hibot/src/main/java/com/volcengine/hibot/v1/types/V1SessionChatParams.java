@@ -13,4 +13,11 @@ public final class V1SessionChatParams {
      * ChatRequest.Files；元素仅需填写 name/contentType + url 或 blobId 之一。
      */
     public List<V1MessageFile> files;
+    /**
+     * 自动审批模式；映射服务端 ChatRequest.Approve，目前仅接受 "" 或 "all"。
+     * 同步聚合（chat）路径下，gateway 在 Approve!="all" 且收到审批请求时会直接报错；
+     * SDK 在调用方未显式赋值时，chat() 会默认下发 "all" 以保持非流式批回复可用，
+     * chatStreaming() 则保持空，由调用方自行处理 approval_request 事件。
+     */
+    public String approve;
 }

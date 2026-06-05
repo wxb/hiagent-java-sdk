@@ -27,8 +27,8 @@ import com.volcengine.hibot.v1.types.V1Session;
 import com.volcengine.hibot.v1.types.V1SessionChatEvent;
 import com.volcengine.hibot.v1.types.V1SessionChatParams;
 import com.volcengine.hibot.v1.types.V1SessionNewParams;
+import com.volcengine.hibot.v1.types.V1Skill;
 import com.volcengine.hibot.v1.types.V1SkillNewParams;
-import com.volcengine.hibot.v1.types.V1SkillVersion;
 import com.volcengine.hibot.v1.types.V1UploadBlob;
 import com.volcengine.hibot.v1.types.V1UploadBlobParams;
 import org.junit.jupiter.api.AfterEach;
@@ -113,7 +113,7 @@ class FullJourneyOfflineTest {
         skillParams.blobId = skillBlob.blobId;
         skillParams.enabled = Boolean.TRUE;
         skillParams.version = "1.0.0";
-        V1SkillVersion skill = client.v1.skills.create(skillParams);
+        V1Skill skill = client.v1.skills.create(skillParams);
         assertNotNull(skill.id);
 
         // --- Step 5: CreateResource ---
@@ -188,12 +188,14 @@ class FullJourneyOfflineTest {
         assertTrue(!streamingFinal.content.isEmpty());
 
         // --- Step 10: Chat (batch / non-streaming) reuses the same session ---
+        // 同步聚合契约：服务端只回 ChatSyncResponse{Message}，SDK 包装成 role=assistant
+        // 的 V1Message；message id 不再下发。
         V1SessionChatParams batchParams = new V1SessionChatParams();
         batchParams.input = "批量：再回答一次同样的问题。";
         V1Message batchFinal = client.v1.sessions.chat(session.id, batchParams);
-        assertNotNull(batchFinal.id);
         assertNotNull(batchFinal.content);
         assertTrue(!batchFinal.content.isEmpty());
+        assertEquals("assistant", batchFinal.role);
 
         // --- Step 11: Inspect recorded requests for per-Action contract ---
         // Mirror the Go mocktop semantics: bodies map is keyed by action and
@@ -333,7 +335,16 @@ class FullJourneyOfflineTest {
                 return;
             }
             case "Chat": {
-                writeSseChat(ex);
+                // 区分流式 / 同步聚合：客户端在非流式分支会显式带 Stream=false。
+                JsonNode body = rec.bodyJson();
+                JsonNode streamFlag = body == null ? null : body.get("Stream");
+                if (streamFlag != null && streamFlag.isBoolean() && !streamFlag.asBoolean()) {
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("Message", "ok");
+                    MockHibotServer.writeOk(ex, result);
+                } else {
+                    writeSseChat(ex);
+                }
                 return;
             }
             default:

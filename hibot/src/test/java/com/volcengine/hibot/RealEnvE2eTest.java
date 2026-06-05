@@ -22,9 +22,9 @@ import com.volcengine.hibot.v1.types.V1Session;
 import com.volcengine.hibot.v1.types.V1SessionChatEvent;
 import com.volcengine.hibot.v1.types.V1SessionChatParams;
 import com.volcengine.hibot.v1.types.V1SessionNewParams;
+import com.volcengine.hibot.v1.types.V1Skill;
 import com.volcengine.hibot.v1.types.V1SkillDeleteParams;
 import com.volcengine.hibot.v1.types.V1SkillNewParams;
-import com.volcengine.hibot.v1.types.V1SkillVersion;
 import com.volcengine.hibot.v1.types.V1UploadBlob;
 import com.volcengine.hibot.v1.types.V1UploadBlobParams;
 import org.junit.jupiter.api.Test;
@@ -119,15 +119,15 @@ class RealEnvE2eTest {
                     streaming.finalMessage.id, streaming.finalMessage.content);
 
             // Step 4: batch (non-streaming) chat reuses the same session.
+            // 服务端 Stream=false 同步分支只回 ChatSyncResponse{Message}，SDK
+            // 把它包装成 role=assistant 的 V1Message，message id 不下发。
             V1SessionChatParams batchParams = new V1SessionChatParams();
             batchParams.agentId = agent.id;
             batchParams.input = "批量真实环境冒烟：再回答一次同样的问题。";
             V1Message batchFinal = client.v1.sessions.chat(session.id, batchParams);
-            assertNotNull(batchFinal.id, "real-env batch final missing id");
             assertNotNull(batchFinal.content, "real-env batch final missing content");
             assertFalse(batchFinal.content.isEmpty(), "real-env batch final content is empty");
-            System.out.printf("batch final: id=%s content=%s%n",
-                    batchFinal.id, batchFinal.content);
+            System.out.printf("batch final: content=%s%n", batchFinal.content);
         }
     }
 
@@ -204,7 +204,7 @@ class RealEnvE2eTest {
             snp.blobId = skillBlobId;
             snp.enabled = Boolean.TRUE;
             snp.version = "1.0.0";
-            V1SkillVersion skill = client.v1.skills.create(snp);
+            V1Skill skill = client.v1.skills.create(snp);
             System.out.printf("created skill version: id=%s%n", skill.id);
 
             // Step 4: create temporary agent — bound to skill + resource.
